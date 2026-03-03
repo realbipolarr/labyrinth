@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
 import math
+import random
 
 import arcade
 
@@ -19,7 +20,9 @@ CELL_SIZE = 54
 PLAYER_RADIUS = CELL_SIZE * 0.24
 MOVE_ANIMATION_SPEED = 9.0
 AUTO_STEP_DELAY = 0.12
-VISION_RADIUS = 4
+BASE_VISION_RADIUS = 4
+SHARD_VISION_BONUS = 1
+SHARD_COUNT = 3
 FONT_DISPLAY = ("Avenir Next", "Avenir", "Futura", "Arial")
 
 
@@ -37,7 +40,11 @@ PLAYER_CORE = (255, 216, 138, 255)
 PLAYER_GLOW = (255, 170, 76, 70)
 EXIT_COLOR = (119, 255, 194, 255)
 EXIT_GLOW = (83, 227, 190, 50)
+EXIT_LOCKED = (255, 145, 99, 255)
+EXIT_LOCKED_GLOW = (255, 127, 70, 52)
 PATH_COLOR = (255, 207, 111, 110)
+SHARD_CORE = (106, 219, 255, 255)
+SHARD_GLOW = (72, 190, 255, 60)
 FOG_HIDDEN = (2, 5, 12, 235)
 FOG_EXPLORED = (3, 8, 18, 168)
 HUD_TEXT = (231, 239, 247, 255)
@@ -56,6 +63,8 @@ class GameState:
     maze: Maze
     mode: GameMode
     player_cell: Position
+    shard_positions: tuple[Position, ...]
+    collected_shards: set[Position] = field(default_factory=set)
     steps: int = 0
     won: bool = False
     show_path_hint: bool = False
@@ -166,6 +175,73 @@ def draw_stat_chip(rect: arcade.Rect, label: str, value: str, accent: tuple[int,
         bold=True,
         anchor_y="bottom",
     )
+
+
+def open_floor_cells(maze: Maze) -> list[Position]:
+    return [
+        (x, y)
+        for y, row in enumerate(maze.grid)
+        for x, cell in enumerate(row)
+        if cell == EMPTY
+    ]
+
+
+def pick_shard_positions(maze: Maze, count: int = SHARD_COUNT, seed: int | None = None) -> tuple[Position, ...]:
+    rng = random.Random(seed)
+    blocked = {maze.start, maze.exit}
+    candidates = [
+        cell
+        for cell in open_floor_cells(maze)
+        if cell not in blocked and abs(cell[0] - maze.start[0]) + abs(cell[1] - maze.start[1]) > 5
+    ]
+    if len(candidates) < count:
+        candidates = [cell for cell in open_floor_cells(maze) if cell not in blocked]
+    rng.shuffle(candidates)
+    return tuple(candidates[:count])
+
+
+def _append_segment(route: list[Position], segment: list[Position]) -> None:
+    if not segment:
+        return
+    if not route:
+        route.extend(segment)
+    else:
+        route.extend(segment[1:])
+
+
+def build_objective_route(
+    maze: Maze,
+    start: Position,
+    exit_cell: Position,
+    shards: tuple[Position, ...],
+) -> list[Position]:
+    remaining = list(shards)
+    current = start
+    route: list[Position] = [start]
+
+    while remaining:
+        best_target: Position | None = None
+        best_path: list[Position] = []
+        best_length: int | None = None
+
+        for target in remaining:
+            path = solve_maze(maze, current, target)
+            if not path:
+                continue
+            if best_length is None or len(path) < best_length:
+                best_target = target
+                best_path = path
+                best_length = len(path)
+
+        if best_target is None:
+            break
+
+        _append_segment(route, best_path)
+        current = best_target
+        remaining.remove(best_target)
+
+    _append_segment(route, solve_maze(maze, current, exit_cell))
+    return route
 
 
 class TitleView(arcade.View):
@@ -322,29 +398,44 @@ class LabyrinthView(arcade.View):
         self.game_camera = arcade.Camera2D()
         self.mode = mode
         self.state = self._create_state(mode)
-        self.solution_path = solve_maze(self.state.maze)
+        self.solution_path = build_objective_route(
+            self.state.maze,
+            self.state.player_cell,
+            self.state.maze.exit,
+            self.state.shard_positions,
+        )
         self.visible_cells: set[Position] = set()
         self.explored_cells: set[Position] = set()
         self.player_draw_position = grid_to_world(self.state.maze, self.state.player_cell)
         self.auto_path_index = 0
         self.auto_step_timer = 0.0
         self.time = 0.0
-        self.status_message = "Найдите выход из лабиринта."
+        self.status_message = "Соберите осколки и откройте выход."
         self._refresh_visibility()
 
     def _create_state(self, mode: GameMode) -> GameState:
         maze = generate_maze(MAZE_WIDTH, MAZE_HEIGHT)
-        return GameState(maze=maze, mode=mode, player_cell=maze.start)
+        return GameState(
+            maze=maze,
+            mode=mode,
+            player_cell=maze.start,
+            shard_positions=pick_shard_positions(maze),
+        )
 
     def regenerate(self) -> None:
         self.state = self._create_state(self.mode)
-        self.solution_path = solve_maze(self.state.maze)
+        self.solution_path = build_objective_route(
+            self.state.maze,
+            self.state.player_cell,
+            self.state.maze.exit,
+            self.state.shard_positions,
+        )
         self.visible_cells = set()
         self.explored_cells = set()
         self.player_draw_position = grid_to_world(self.state.maze, self.state.player_cell)
         self.auto_path_index = 0
         self.auto_step_timer = 0.0
-        self.status_message = "Новый лабиринт готов."
+        self.status_message = "Новый лабиринт готов. Ищите осколки."
         self._refresh_visibility()
 
     def on_show_view(self) -> None:
@@ -391,7 +482,8 @@ class LabyrinthView(arcade.View):
         if self.state.maze.is_open(next_cell):
             self.state.player_cell = next_cell
             self.state.steps += 1
-            self.status_message = "Продвигайтесь к выходу."
+            self.status_message = "Продвигайтесь к следующему осколку."
+            self._collect_shard_if_needed()
             self._refresh_visibility()
             self._check_win()
 
@@ -425,7 +517,8 @@ class LabyrinthView(arcade.View):
         self.auto_path_index += 1
         self.state.player_cell = self.solution_path[self.auto_path_index]
         self.state.steps = self.auto_path_index
-        self.status_message = "ИИ уверенно ищет кратчайший путь."
+        self.status_message = "ИИ собирает осколки и открывает путь."
+        self._collect_shard_if_needed()
         self._refresh_visibility()
         self._check_win()
 
@@ -435,14 +528,47 @@ class LabyrinthView(arcade.View):
         self.game_camera.position = move_towards(current, target, 4.0, delta_time)
 
     def _refresh_visibility(self) -> None:
-        visible = visible_cells(self.state.maze, self.state.player_cell, radius=VISION_RADIUS)
+        visible = visible_cells(
+            self.state.maze,
+            self.state.player_cell,
+            radius=self.current_vision_radius,
+        )
         self.visible_cells = visible
         self.explored_cells.update(visible)
 
+    @property
+    def current_vision_radius(self) -> int:
+        return BASE_VISION_RADIUS + len(self.state.collected_shards) * SHARD_VISION_BONUS
+
+    @property
+    def shards_remaining(self) -> int:
+        return len(self.state.shard_positions) - len(self.state.collected_shards)
+
+    @property
+    def exit_unlocked(self) -> bool:
+        return self.shards_remaining == 0
+
+    def _collect_shard_if_needed(self) -> None:
+        player_cell = self.state.player_cell
+        if player_cell not in self.state.shard_positions or player_cell in self.state.collected_shards:
+            return
+
+        self.state.collected_shards.add(player_cell)
+        if self.exit_unlocked:
+            self.status_message = "Все осколки собраны. Выход открыт."
+        else:
+            self.status_message = f"Осколок найден. Осталось: {self.shards_remaining}."
+
     def _check_win(self) -> None:
-        if self.state.player_cell == self.state.maze.exit:
-            self.state.won = True
-            self.status_message = "Выход найден."
+        if self.state.player_cell != self.state.maze.exit:
+            return
+
+        if not self.exit_unlocked:
+            self.status_message = f"Выход закрыт. Осталось осколков: {self.shards_remaining}."
+            return
+
+        self.state.won = True
+        self.status_message = "Выход найден."
 
     def on_draw(self) -> None:
         self.clear()
@@ -451,6 +577,7 @@ class LabyrinthView(arcade.View):
         self.draw_maze_backdrop()
         self.draw_maze()
         self.draw_goal()
+        self.draw_shards()
         self.draw_path()
         self.draw_player_light()
         self.draw_player()
@@ -519,8 +646,37 @@ class LabyrinthView(arcade.View):
 
         center_x, center_y = grid_to_world(self.state.maze, self.state.maze.exit)
         pulse = 8 * math.sin(self.time * 2.7)
-        arcade.draw_circle_filled(center_x, center_y, CELL_SIZE * 0.28 + pulse * 0.08, EXIT_GLOW)
-        arcade.draw_circle_filled(center_x, center_y, CELL_SIZE * 0.17, EXIT_COLOR)
+        glow_color = EXIT_GLOW if self.exit_unlocked else EXIT_LOCKED_GLOW
+        core_color = EXIT_COLOR if self.exit_unlocked else EXIT_LOCKED
+        arcade.draw_circle_filled(center_x, center_y, CELL_SIZE * 0.28 + pulse * 0.08, glow_color)
+        arcade.draw_circle_filled(center_x, center_y, CELL_SIZE * 0.17, core_color)
+
+    def draw_shards(self) -> None:
+        for shard in self.state.shard_positions:
+            if shard in self.state.collected_shards or shard not in self.explored_cells:
+                continue
+
+            center_x, center_y = grid_to_world(self.state.maze, shard)
+            pulse = 1 + 0.08 * math.sin(self.time * 3.6 + shard[0] * 0.8 + shard[1] * 0.5)
+            alpha_scale = 1.0 if shard in self.visible_cells else 0.45
+            arcade.draw_circle_filled(
+                center_x,
+                center_y,
+                CELL_SIZE * 0.18 * pulse,
+                (SHARD_GLOW[0], SHARD_GLOW[1], SHARD_GLOW[2], int(SHARD_GLOW[3] * alpha_scale)),
+            )
+            arcade.draw_circle_filled(
+                center_x,
+                center_y,
+                CELL_SIZE * 0.09,
+                (SHARD_CORE[0], SHARD_CORE[1], SHARD_CORE[2], int(220 * alpha_scale)),
+            )
+            arcade.draw_circle_filled(
+                center_x,
+                center_y + 2,
+                CELL_SIZE * 0.045,
+                (220, 247, 255, int(240 * alpha_scale)),
+            )
 
     def draw_path(self) -> None:
         if self.state.mode == GameMode.AUTO:
@@ -539,9 +695,9 @@ class LabyrinthView(arcade.View):
     def draw_player_light(self) -> None:
         center_x, center_y = self.player_draw_position
         for radius, alpha in (
-            (CELL_SIZE * (VISION_RADIUS + 1.4), 12),
-            (CELL_SIZE * (VISION_RADIUS + 0.8), 20),
-            (CELL_SIZE * (VISION_RADIUS * 0.9), 28),
+            (CELL_SIZE * (self.current_vision_radius + 1.4), 12),
+            (CELL_SIZE * (self.current_vision_radius + 0.8), 20),
+            (CELL_SIZE * (self.current_vision_radius * 0.9), 28),
         ):
             arcade.draw_circle_filled(center_x, center_y, radius, (255, 176, 72, alpha))
 
@@ -604,14 +760,14 @@ class LabyrinthView(arcade.View):
         )
         draw_stat_chip(
             arcade.LBWH(panel.left + padding + chip_width + chip_gap, chip_bottom, chip_width, chip_height),
-            "Обзор",
-            f"{len(self.visible_cells)} клеток",
+            "Осколки",
+            f"{len(self.state.collected_shards)} / {len(self.state.shard_positions)}",
             (112, 201, 255, 255),
         )
         helper_bottom = panel.bottom + 52
         status_bottom = panel.bottom + 16
         arcade.draw_text(
-            "Свет вокруг героя показывает текущую зону видимости.",
+            f"Свет: {self.current_vision_radius} | Выход: {'открыт' if self.exit_unlocked else 'закрыт'}",
             panel.left + padding,
             helper_bottom,
             HUD_MUTED,
