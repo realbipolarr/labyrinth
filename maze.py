@@ -32,10 +32,23 @@ class Maze:
 
 
 def _normalize_size(value: int) -> int:
-    value = max(5, value)
-    if value % 2 == 0:
-        value += 1
-    return value
+    return max(5, value)
+
+
+def _connect_exit(grid: list[list[str]], exit_pos: Position) -> None:
+    exit_x, exit_y = exit_pos
+    target_x = exit_x if exit_x % 2 == 1 else exit_x - 1
+    target_y = exit_y if exit_y % 2 == 1 else exit_y - 1
+
+    grid[exit_y][exit_x] = EMPTY
+
+    x, y = exit_x, exit_y
+    while x != target_x:
+        x += -1 if x > target_x else 1
+        grid[y][x] = EMPTY
+    while y != target_y:
+        y += -1 if y > target_y else 1
+        grid[y][x] = EMPTY
 
 
 def generate_maze(width: int = 21, height: int = 21, seed: int | None = None) -> Maze:
@@ -71,7 +84,7 @@ def generate_maze(width: int = 21, height: int = 21, seed: int | None = None) ->
         grid[ny][nx] = EMPTY
         stack.append((nx, ny))
 
-    grid[exit_pos[1]][exit_pos[0]] = EMPTY
+    _connect_exit(grid, exit_pos)
     return Maze(width=width, height=height, grid=grid, start=start, exit=exit_pos)
 
 

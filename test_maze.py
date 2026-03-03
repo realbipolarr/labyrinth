@@ -10,6 +10,15 @@ class MazeTests(unittest.TestCase):
         self.assertTrue(maze.is_open(maze.start))
         self.assertTrue(maze.is_open(maze.exit))
 
+    def test_generator_supports_exact_even_sizes(self) -> None:
+        maze = generate_maze(32, 10, seed=13)
+
+        self.assertEqual(maze.width, 32)
+        self.assertEqual(maze.height, 10)
+        self.assertTrue(maze.is_open(maze.start))
+        self.assertTrue(maze.is_open(maze.exit))
+        self.assertTrue(solve_maze(maze))
+
     def test_solver_finds_path_between_start_and_exit(self) -> None:
         maze = generate_maze(21, 21, seed=11)
         path = solve_maze(maze)
