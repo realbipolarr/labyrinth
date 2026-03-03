@@ -1,21 +1,37 @@
 # Labyrinth
 
-Консольная игра-лабиринт на Python.
+Графическая игра-лабиринт на Python и `Arcade`.
 
 ## Возможности
 
 - случайная генерация лабиринта;
-- автоматическое прохождение лабиринта;
-- ручное прохождение через `W`, `A`, `S`, `D`.
+- режим автопрохождения;
+- ручной режим с `WASD` и стрелками;
+- туман войны и память исследованных клеток;
+- плавное движение, камера и атмосферный HUD;
+- консольный fallback-режим.
 
-## Запуск
+## Запуск графической версии
 
 ```bash
-python3 main.py
+.venv/bin/python main.py
+```
+
+## Запуск консольной версии
+
+```bash
+.venv/bin/python main.py --console
+```
+
+## Установка зависимостей
+
+```bash
+/opt/homebrew/bin/python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 ## Тесты
 
 ```bash
-python3 -m unittest test_maze.py
+.venv/bin/python -m unittest test_maze.py
 ```

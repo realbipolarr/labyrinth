@@ -22,6 +22,14 @@ class Maze:
         x, y = position
         return 0 <= x < self.width and 0 <= y < self.height and self.grid[y][x] == EMPTY
 
+    def in_bounds(self, position: Position) -> bool:
+        x, y = position
+        return 0 <= x < self.width and 0 <= y < self.height
+
+    def is_wall(self, position: Position) -> bool:
+        x, y = position
+        return self.in_bounds(position) and self.grid[y][x] == WALL
+
 
 def _normalize_size(value: int) -> int:
     value = max(5, value)
@@ -97,6 +105,34 @@ def solve_maze(maze: Maze, start: Position | None = None, goal: Position | None 
         current = parents[current]
     path.reverse()
     return path
+
+
+def visible_cells(maze: Maze, origin: Position, radius: int = 4) -> set[Position]:
+    if not maze.in_bounds(origin):
+        return set()
+
+    queue = deque([(origin, 0)])
+    seen = {origin}
+    visible = {origin}
+    directions = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+
+    while queue:
+        current, distance = queue.popleft()
+        if distance >= radius:
+            continue
+
+        x, y = current
+        for dx, dy in directions:
+            nxt = (x + dx, y + dy)
+            if nxt in seen or not maze.in_bounds(nxt):
+                continue
+
+            seen.add(nxt)
+            visible.add(nxt)
+            if maze.is_open(nxt):
+                queue.append((nxt, distance + 1))
+
+    return visible
 
 
 def render_maze(maze: Maze, player: Position | None = None, path: list[Position] | None = None) -> str:
