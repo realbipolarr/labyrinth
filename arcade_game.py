@@ -7,6 +7,7 @@ import math
 import random
 
 import arcade
+from arcade.types import Color
 from PIL import Image, ImageDraw
 
 from maze import EMPTY, WALL, Maze, Position, generate_maze, solve_maze
@@ -86,6 +87,10 @@ def mix_color(base: tuple[int, int, int, int], delta: int) -> tuple[int, int, in
         min(255, max(0, b + delta)),
         a,
     )
+
+
+def to_color(value: tuple[int, int, int, int]) -> Color:
+    return Color(*value)
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
@@ -846,12 +851,12 @@ class LabyrinthView(arcade.View):
                 rect = cell_rect(self.state.maze, position)
                 if position == self.state.door_position:
                     door_color = (110, 210, 255, 255) if self.state.has_key else (214, 162, 110, 255)
-                    arcade.draw_texture_rect(get_door_texture(self.state.has_key), rect, color=door_color)
+                    arcade.draw_texture_rect(get_door_texture(self.state.has_key), rect, color=to_color(door_color))
                     continue
 
                 base_color = self.pick_tile_color(position, cell)
                 texture = get_floor_texture(abs(cell_noise(position)) % 2) if cell == EMPTY else get_wall_texture(abs(cell_noise(position)) % 2)
-                arcade.draw_texture_rect(texture, rect, color=base_color)
+                arcade.draw_texture_rect(texture, rect, color=to_color(base_color))
 
                 if position in self.visible_cells and cell != EMPTY:
                     left, bottom, width, height = rect.lbwh
@@ -889,13 +894,17 @@ class LabyrinthView(arcade.View):
             glow = (SHARD_GLOW[0], SHARD_GLOW[1], SHARD_GLOW[2], int(SHARD_GLOW[3] * alpha_scale))
             arcade.draw_circle_filled(center_x, center_y, CELL_SIZE * 0.18 * pulse, glow)
             shard_rect = inset_rect(cell_rect(self.state.maze, shard), CELL_SIZE * 0.19, CELL_SIZE * 0.19)
-            arcade.draw_texture_rect(get_shard_texture(), shard_rect, color=(SHARD_CORE[0], SHARD_CORE[1], SHARD_CORE[2], int(230 * alpha_scale)))
+            arcade.draw_texture_rect(
+                get_shard_texture(),
+                shard_rect,
+                color=to_color((SHARD_CORE[0], SHARD_CORE[1], SHARD_CORE[2], int(230 * alpha_scale))),
+            )
 
     def draw_key(self) -> None:
         if self.state.has_key or self.state.key_position is None or self.state.key_position not in self.explored_cells:
             return
         rect = inset_rect(cell_rect(self.state.maze, self.state.key_position), CELL_SIZE * 0.18, CELL_SIZE * 0.18)
-        arcade.draw_texture_rect(get_key_texture(), rect, color=(255, 214, 102, 255))
+        arcade.draw_texture_rect(get_key_texture(), rect, color=to_color((255, 214, 102, 255)))
 
     def draw_traps(self) -> None:
         for trap in self.state.trap_positions:
@@ -903,7 +912,7 @@ class LabyrinthView(arcade.View):
                 continue
             rect = inset_rect(cell_rect(self.state.maze, trap), CELL_SIZE * 0.16, CELL_SIZE * 0.16)
             color = (255, 116, 106, 220) if trap not in self.state.triggered_traps else (128, 144, 160, 140)
-            arcade.draw_texture_rect(get_trap_texture(), rect, color=color)
+            arcade.draw_texture_rect(get_trap_texture(), rect, color=to_color(color))
 
     def draw_path(self) -> None:
         if self.state.mode == GameMode.AUTO:
