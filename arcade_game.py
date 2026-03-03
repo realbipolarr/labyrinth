@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 import math
 
 import arcade
@@ -26,6 +27,8 @@ BACKGROUND_TOP = (12, 22, 36)
 BACKGROUND_BOTTOM = (3, 8, 17)
 PANEL_COLOR = (12, 18, 30, 220)
 PANEL_BORDER = (84, 123, 163, 120)
+PANEL_INNER = (26, 42, 58, 70)
+PANEL_SOFT = (17, 27, 40, 200)
 VISIBLE_FLOOR = (53, 92, 105, 255)
 EXPLORED_FLOOR = (24, 42, 54, 255)
 VISIBLE_WALL = (120, 167, 181, 255)
@@ -68,6 +71,10 @@ def mix_color(base: tuple[int, int, int, int], delta: int) -> tuple[int, int, in
     )
 
 
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
 def cell_noise(cell: Position) -> int:
     x, y = cell
     return ((x * 17 + y * 31) % 7) - 3
@@ -95,6 +102,70 @@ def move_towards(current: tuple[float, float], target: tuple[float, float], spee
 
 def is_close(a: tuple[float, float], b: tuple[float, float], tolerance: float = 1.0) -> bool:
     return abs(a[0] - b[0]) <= tolerance and abs(a[1] - b[1]) <= tolerance
+
+
+@lru_cache(maxsize=256)
+def measure_text_width(text: str, font_size: int, font_name: tuple[str, ...], bold: bool = False) -> float:
+    return arcade.Text(text, 0, 0, font_size=font_size, font_name=font_name, bold=bold).content_width
+
+
+def fit_text_size(
+    text: str,
+    *,
+    preferred: int,
+    minimum: int,
+    max_width: float,
+    font_name: tuple[str, ...],
+    bold: bool = False,
+) -> int:
+    for size in range(preferred, minimum - 1, -1):
+        if measure_text_width(text, size, font_name, bold) <= max_width:
+            return size
+    return minimum
+
+
+def inset_rect(rect: arcade.Rect, inset_x: float, inset_y: float) -> arcade.Rect:
+    return arcade.LBWH(rect.left + inset_x, rect.bottom + inset_y, rect.width - inset_x * 2, rect.height - inset_y * 2)
+
+
+def draw_glass_panel(
+    rect: arcade.Rect,
+    *,
+    fill_color: tuple[int, int, int, int] = PANEL_COLOR,
+    border_color: tuple[int, int, int, int] = PANEL_BORDER,
+    accent_color: tuple[int, int, int, int] = ACCENT,
+) -> None:
+    arcade.draw_rect_filled(rect, fill_color)
+    arcade.draw_rect_filled(inset_rect(rect, 8, 8), PANEL_INNER)
+    arcade.draw_rect_outline(rect, border_color, border_width=2)
+    arcade.draw_rect_filled(arcade.LBWH(rect.left, rect.top - 4, rect.width, 4), accent_color[:3] + (70,))
+    arcade.draw_line(rect.left + 18, rect.top - 18, rect.left + 72, rect.top - 18, accent_color[:3] + (140,), 2)
+    arcade.draw_line(rect.right - 72, rect.bottom + 18, rect.right - 18, rect.bottom + 18, border_color[:3] + (110,), 2)
+
+
+def draw_stat_chip(rect: arcade.Rect, label: str, value: str, accent: tuple[int, int, int, int]) -> None:
+    arcade.draw_rect_filled(rect, PANEL_SOFT)
+    arcade.draw_rect_outline(rect, accent[:3] + (90,), border_width=1)
+    arcade.draw_text(
+        label,
+        rect.left + 18,
+        rect.top - 12,
+        HUD_MUTED,
+        font_size=10,
+        font_name=FONT_DISPLAY,
+        anchor_y="top",
+    )
+    value_font_size = 19 if len(value) <= 4 else 17
+    arcade.draw_text(
+        value,
+        rect.left + 18,
+        rect.bottom + 14,
+        accent,
+        font_size=value_font_size,
+        font_name=FONT_DISPLAY,
+        bold=True,
+        anchor_y="bottom",
+    )
 
 
 class TitleView(arcade.View):
@@ -182,6 +253,13 @@ class TitleView(arcade.View):
     def draw_title(self) -> None:
         left = 130
         top = self.window.height - 150
+        title_size = fit_text_size(
+            "Аркадная версия с атмосферой, туманом войны и плавным движением",
+            preferred=20,
+            minimum=15,
+            max_width=self.window.width - left - 180,
+            font_name=FONT_DISPLAY,
+        )
         arcade.draw_text(
             "LABYRINTH",
             left,
@@ -196,13 +274,12 @@ class TitleView(arcade.View):
             left,
             top - 48,
             HUD_MUTED,
-            font_size=20,
+            font_size=title_size,
             font_name=FONT_DISPLAY,
         )
 
         panel = arcade.LBWH(left - 30, 150, 700, 320)
-        arcade.draw_rect_filled(panel, PANEL_COLOR)
-        arcade.draw_rect_outline(panel, PANEL_BORDER, border_width=2)
+        draw_glass_panel(panel, accent_color=(82, 147, 255, 255))
 
         for index, (title, subtitle) in enumerate(self.options):
             y = 395 - index * 110
@@ -210,8 +287,7 @@ class TitleView(arcade.View):
             option_rect = arcade.LBWH(left, y - 36, 585, 78)
             fill = (255, 176, 74, 54) if is_selected else (16, 26, 40, 140)
             border = ACCENT if is_selected else (63, 95, 122, 90)
-            arcade.draw_rect_filled(option_rect, fill)
-            arcade.draw_rect_outline(option_rect, border, border_width=2)
+            draw_glass_panel(option_rect, fill_color=fill, border_color=border, accent_color=border if is_selected else (70, 120, 158, 255))
             arcade.draw_text(
                 f"{index + 1}. {title}",
                 left + 26,
@@ -372,9 +448,11 @@ class LabyrinthView(arcade.View):
         self.clear()
         self.draw_background()
         self.game_camera.use()
+        self.draw_maze_backdrop()
         self.draw_maze()
         self.draw_goal()
         self.draw_path()
+        self.draw_player_light()
         self.draw_player()
         self.draw_fog()
         self.window.default_camera.use()
@@ -394,6 +472,22 @@ class LabyrinthView(arcade.View):
             )
             rect = arcade.LBWH(0, self.window.height - (index + 1) * height, self.window.width, height + 2)
             arcade.draw_rect_filled(rect, color)
+
+        for index in range(9):
+            angle = self.time * 0.1 + index * 0.8
+            radius = 140 + index * 18
+            x = self.window.width * (0.15 + 0.08 * index) + math.sin(angle) * 34
+            y = self.window.height * (0.16 + 0.07 * index) + math.cos(angle * 1.6) * 22
+            arcade.draw_circle_filled(x, y, radius, (20, 58, 74, max(10, 32 - index * 2)))
+
+    def draw_maze_backdrop(self) -> None:
+        maze_width = self.state.maze.width * CELL_SIZE
+        maze_height = self.state.maze.height * CELL_SIZE
+        backdrop = arcade.LBWH(-CELL_SIZE * 0.85, -CELL_SIZE * 0.85, maze_width + CELL_SIZE * 1.7, maze_height + CELL_SIZE * 1.7)
+        arcade.draw_rect_filled(backdrop, (6, 11, 22, 210))
+        arcade.draw_rect_outline(backdrop, (50, 77, 102, 100), border_width=3)
+        inner = inset_rect(backdrop, CELL_SIZE * 0.28, CELL_SIZE * 0.28)
+        arcade.draw_rect_outline(inner, (96, 141, 170, 45), border_width=2)
 
     def draw_maze(self) -> None:
         for y, row in enumerate(self.state.maze.grid):
@@ -442,6 +536,15 @@ class LabyrinthView(arcade.View):
             center_x, center_y = grid_to_world(self.state.maze, cell)
             arcade.draw_circle_filled(center_x, center_y, CELL_SIZE * 0.09, PATH_COLOR)
 
+    def draw_player_light(self) -> None:
+        center_x, center_y = self.player_draw_position
+        for radius, alpha in (
+            (CELL_SIZE * (VISION_RADIUS + 1.4), 12),
+            (CELL_SIZE * (VISION_RADIUS + 0.8), 20),
+            (CELL_SIZE * (VISION_RADIUS * 0.9), 28),
+        ):
+            arcade.draw_circle_filled(center_x, center_y, radius, (255, 176, 72, alpha))
+
     def draw_player(self) -> None:
         center_x, center_y = self.player_draw_position
         for multiplier, alpha in ((2.8, 26), (2.1, 48), (1.5, 68)):
@@ -460,25 +563,89 @@ class LabyrinthView(arcade.View):
                     arcade.draw_rect_filled(rect, FOG_EXPLORED)
 
     def draw_hud(self) -> None:
-        panel = arcade.LBWH(28, self.window.height - 166, 420, 132)
-        arcade.draw_rect_filled(panel, PANEL_COLOR)
-        arcade.draw_rect_outline(panel, PANEL_BORDER, border_width=2)
+        margin = 28
+        panel_width = clamp(self.window.width * 0.42, 460, 650)
+        panel_height = 246
+        panel = arcade.LBWH(margin, self.window.height - panel_height - margin, panel_width, panel_height)
+        draw_glass_panel(panel)
 
+        padding = 28
         title = "Автопрохождение" if self.state.mode == GameMode.AUTO else "Ручное исследование"
-        arcade.draw_text(title, 50, self.window.height - 78, HUD_TEXT, 28, font_name=FONT_DISPLAY, bold=True)
+        title_font = fit_text_size(
+            title,
+            preferred=28,
+            minimum=18,
+            max_width=panel.width - padding * 2,
+            font_name=FONT_DISPLAY,
+            bold=True,
+        )
         arcade.draw_text(
-            f"Шаги: {self.state.steps}   Туман: {len(self.visible_cells)} клеток в обзоре",
-            50,
-            self.window.height - 112,
+            title,
+            panel.left + padding,
+            panel.top - 24,
+            HUD_TEXT,
+            title_font,
+            font_name=FONT_DISPLAY,
+            bold=True,
+            anchor_y="top",
+        )
+
+        title_y = panel.top - 24
+        chips_top = title_y - title_font - 30
+        chip_gap = 18
+        chip_width = (panel.width - padding * 2 - chip_gap) / 2
+        chip_height = 72
+        chip_bottom = chips_top - chip_height
+        draw_stat_chip(
+            arcade.LBWH(panel.left + padding, chip_bottom, chip_width, chip_height),
+            "Шаги",
+            str(self.state.steps),
+            ACCENT,
+        )
+        draw_stat_chip(
+            arcade.LBWH(panel.left + padding + chip_width + chip_gap, chip_bottom, chip_width, chip_height),
+            "Обзор",
+            f"{len(self.visible_cells)} клеток",
+            (112, 201, 255, 255),
+        )
+        helper_bottom = panel.bottom + 52
+        status_bottom = panel.bottom + 16
+        arcade.draw_text(
+            "Свет вокруг героя показывает текущую зону видимости.",
+            panel.left + padding,
+            helper_bottom,
             HUD_MUTED,
-            16,
+            13,
+            width=int(panel.width - padding * 2),
+            multiline=True,
+            anchor_y="bottom",
             font_name=FONT_DISPLAY,
         )
-        arcade.draw_text(self.status_message, 50, self.window.height - 138, ACCENT if not self.state.won else SUCCESS, 16, font_name=FONT_DISPLAY)
+        arcade.draw_text(
+            self.status_message,
+            panel.left + padding,
+            status_bottom,
+            ACCENT if not self.state.won else SUCCESS,
+            17,
+            width=int(panel.width - padding * 2),
+            multiline=True,
+            anchor_y="bottom",
+            font_name=FONT_DISPLAY,
+        )
 
-        help_panel = arcade.LBWH(self.window.width - 360, self.window.height - 166, 332, 132)
-        arcade.draw_rect_filled(help_panel, (8, 14, 24, 205))
-        arcade.draw_rect_outline(help_panel, (61, 93, 122, 95), border_width=2)
+        help_panel_width = clamp(self.window.width * 0.26, 320, 390)
+        help_panel = arcade.LBWH(self.window.width - help_panel_width - margin, self.window.height - panel_height - margin, help_panel_width, panel_height)
+        draw_glass_panel(help_panel, fill_color=(8, 14, 24, 205), border_color=(61, 93, 122, 95), accent_color=(100, 162, 214, 255))
+        arcade.draw_text(
+            "Управление",
+            help_panel.left + 24,
+            help_panel.top - 24,
+            HUD_TEXT,
+            22,
+            font_name=FONT_DISPLAY,
+            bold=True,
+            anchor_y="top",
+        )
         controls = [
             "WASD / стрелки: движение",
             "H: показать путь",
@@ -488,46 +655,58 @@ class LabyrinthView(arcade.View):
         for index, line in enumerate(controls):
             arcade.draw_text(
                 line,
-                self.window.width - 336,
-                self.window.height - 82 - index * 24,
+                help_panel.left + 24,
+                help_panel.top - 70 - index * 36,
                 HUD_MUTED if index else HUD_TEXT,
-                15,
+                14,
+                width=int(help_panel.width - 48),
                 font_name=FONT_DISPLAY,
+                anchor_y="top",
             )
 
         if self.state.won:
             self.draw_win_overlay()
 
     def draw_win_overlay(self) -> None:
-        overlay = arcade.LBWH(self.window.width / 2 - 250, self.window.height / 2 - 110, 500, 220)
-        arcade.draw_rect_filled(overlay, (8, 12, 18, 235))
-        arcade.draw_rect_outline(overlay, SUCCESS, border_width=2)
+        overlay = arcade.LBWH(self.window.width / 2 - 290, self.window.height / 2 - 120, 580, 240)
+        draw_glass_panel(overlay, fill_color=(8, 12, 18, 235), border_color=SUCCESS, accent_color=SUCCESS)
+        title_font = fit_text_size(
+            "Выбрались из лабиринта",
+            preferred=34,
+            minimum=24,
+            max_width=overlay.width - 56,
+            font_name=FONT_DISPLAY,
+            bold=True,
+        )
         arcade.draw_text(
             "Выбрались из лабиринта",
             self.window.width / 2,
-            self.window.height / 2 + 42,
+            overlay.top - 46,
             HUD_TEXT,
-            34,
+            title_font,
             anchor_x="center",
+            anchor_y="top",
             font_name=FONT_DISPLAY,
             bold=True,
         )
         arcade.draw_text(
             f"Шагов сделано: {self.state.steps}",
             self.window.width / 2,
-            self.window.height / 2,
+            overlay.bottom + 102,
             SUCCESS,
             22,
             anchor_x="center",
+            anchor_y="bottom",
             font_name=FONT_DISPLAY,
         )
         arcade.draw_text(
             "R — сыграть ещё раз, Esc — вернуться в меню",
             self.window.width / 2,
-            self.window.height / 2 - 42,
+            overlay.bottom + 48,
             HUD_MUTED,
             16,
             anchor_x="center",
+            anchor_y="bottom",
             font_name=FONT_DISPLAY,
         )
 
